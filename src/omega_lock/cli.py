@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from math import isfinite
 import sys
 from pathlib import Path
 from typing import Any, Sequence
@@ -36,6 +37,8 @@ def _load_json(path: str) -> Any:
         raise SystemExit2(f"file not found: {path}")
     except json.JSONDecodeError as exc:
         raise SystemExit2(f"invalid JSON in {path}: {exc}")
+    except (OSError, UnicodeError) as exc:
+        raise SystemExit2(f"could not read {path}: {exc}") from exc
 
 
 def _load_score_array(path: str, label: str) -> list[float]:
@@ -47,7 +50,13 @@ def _load_score_array(path: str, label: str) -> list[float]:
             f"{label} file {path} must contain a JSON array of numbers, "
             f"e.g. [0.91, 0.84, 0.77]"
         )
-    return [float(v) for v in payload]
+    try:
+        scores = [float(v) for v in payload]
+    except OverflowError as exc:
+        raise SystemExit2(f"{label} scores must be finite numbers") from exc
+    if not all(isfinite(value) for value in scores):
+        raise SystemExit2(f"{label} scores must be finite numbers")
+    return scores
 
 
 def _cmd_demo(_args: argparse.Namespace) -> int:
@@ -64,11 +73,14 @@ def _cmd_gate(args: argparse.Namespace) -> int:
     train = _load_score_array(args.train, "--train")
     holdout = _load_score_array(args.holdout, "--holdout")
 
-    thresholds = (
-        KCThresholds.pure_objective(pearson_min=args.pearson_min)
-        if args.pearson_min is not None
-        else None
-    )
+    try:
+        thresholds = (
+            KCThresholds.pure_objective(pearson_min=args.pearson_min)
+            if args.pearson_min is not None
+            else None
+        )
+    except ValueError as exc:
+        raise SystemExit2(str(exc)) from exc
     verdict = gate_scores(train, holdout, thresholds=thresholds)
 
     print(f"gate     : {'PASS' if verdict.passed else 'FAIL'}")
